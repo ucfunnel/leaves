@@ -80,6 +80,39 @@ func (e *lgEnsemble) predictLeafIndicesInner(fvals []float64, nEstimators int, p
 	}
 }
 
+func (e *lgEnsemble) predictInnerSparse(fmap map[int]float64, nEstimators int, predictions []float64, startIndex int) {
+	for k := 0; k < e.nRawOutputGroups; k++ {
+		predictions[startIndex+k] = 0.0
+	}
+
+	coef := 1.0
+	if e.averageOutput {
+		coef = 1.0 / float64(nEstimators)
+	}
+
+	for i := 0; i < nEstimators; i++ {
+		for k := 0; k < e.nRawOutputGroups; k++ {
+			pred, _ := e.Trees[i*e.nRawOutputGroups+k].predictSparse(fmap)
+			predictions[startIndex+k] += pred * coef
+		}
+	}
+}
+
+func (e *lgEnsemble) predictLeafIndicesInnerSparse(fmap map[int]float64, nEstimators int, predictions []float64, startIndex int) {
+	nResults := e.nRawOutputGroups * nEstimators
+	for k := 0; k < nResults; k++ {
+		predictions[startIndex+k] = 0.0
+	}
+
+	for i := 0; i < nEstimators; i++ {
+		for k := 0; k < e.nRawOutputGroups; k++ {
+			_, idx := e.Trees[i*e.nRawOutputGroups+k].predictSparse(fmap)
+			// note that we save leaf idx as float64 for type consistency over different types of results
+			predictions[startIndex+k*nEstimators+i] = float64(idx)
+		}
+	}
+}
+
 func (e *lgEnsemble) adjustNEstimators(nEstimators int) int {
 	if nEstimators > 0 {
 		nEstimators = util.MinInt(nEstimators, e.NEstimators())

@@ -21,6 +21,8 @@ type ensembleBaseInterface interface {
 	adjustNEstimators(nEstimators int) int
 	predictInner(fvals []float64, nEstimators int, predictions []float64, startIndex int)
 	predictLeafIndicesInner(fvals []float64, nEstimators int, predictions []float64, startIndex int)
+	predictInnerSparse(fmap map[int]float64, nEstimators int, predictions []float64, startIndex int)
+	predictLeafIndicesInnerSparse(fmap map[int]float64, nEstimators int, predictions []float64, startIndex int)
 	resetFVals(fvals []float64)
 }
 
@@ -39,6 +41,19 @@ func (e *Ensemble) predictInnerAndTransform(fvals []float64, nEstimators int, pr
 		// TODO: avoid allocation here
 		rawPredictions := make([]float64, e.NRawOutputGroups())
 		e.predictInner(fvals, nEstimators, rawPredictions, 0)
+		e.transform.Transform(rawPredictions, predictions, startIndex)
+	}
+}
+
+func (e *Ensemble) predictInnerAndTransformSparse(fmap map[int]float64, nEstimators int, predictions []float64, startIndex int) {
+	if e.Transformation().Type() == transformation.Raw {
+		e.predictInnerSparse(fmap, nEstimators, predictions, startIndex)
+	} else if e.Transformation().Type() == transformation.LeafIndex {
+		e.predictLeafIndicesInnerSparse(fmap, nEstimators, predictions, startIndex)
+	} else {
+		// TODO: avoid allocation here
+		rawPredictions := make([]float64, e.NRawOutputGroups())
+		e.predictInnerSparse(fmap, nEstimators, rawPredictions, 0)
 		e.transform.Transform(rawPredictions, predictions, startIndex)
 	}
 }
@@ -103,6 +118,7 @@ func (e *Ensemble) Predict(fvals []float64, nEstimators int, predictions []float
 // Note, `predictions` slice should be properly allocated on call side
 func (e *Ensemble) PredictCSR(indptr []int, cols []int, vals []float64, predictions []float64, nEstimators int, nThreads int) error {
 	nRows := len(indptr) - 1
+	//fmt.Printf("indptr %v, cols %v, vals %v, nRows %v", indptr, cols, vals, nRows)
 	if len(predictions) < e.NOutputGroups()*nRows {
 		return fmt.Errorf("predictions slice too short (should be at least %d)", e.NOutputGroups()*nRows)
 	}
@@ -114,9 +130,9 @@ func (e *Ensemble) PredictCSR(indptr []int, cols []int, vals []float64, predicti
 
 	if nRows <= BatchSize || nThreads == 0 || nThreads == 1 {
 		// single thread calculations
-		fvals := make([]float64, e.NFeatures())
-		e.resetFVals(fvals)
-		e.predictCSRInner(indptr, cols, vals, 0, len(indptr)-1, predictions, nEstimators, fvals)
+		//fvals := make([]float64, e.NFeatures())
+		//e.resetFVals(fvals)
+		e.predictCSRInnerSparse(indptr, cols, vals, 0, len(indptr)-1, predictions, nEstimators)
 		return nil
 	}
 	if nThreads > runtime.GOMAXPROCS(0) || nThreads < 1 {
@@ -133,15 +149,15 @@ func (e *Ensemble) PredictCSR(indptr []int, cols []int, vals []float64, predicti
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			fvals := make([]float64, e.NFeatures())
-			e.resetFVals(fvals)
+			//fvals := make([]float64, e.NFeatures())
+			//e.resetFVals(fvals)
 			for startIndex := range tasks {
 				endIndex := startIndex + BatchSize
 				if endIndex > nRows {
 					endIndex = nRows
 				}
 
-				e.predictCSRInner(indptr, cols, vals, startIndex, endIndex, predictions, nEstimators, fvals)
+				e.predictCSRInnerSparse(indptr, cols, vals, startIndex, endIndex, predictions, nEstimators)
 			}
 		}()
 	}
@@ -176,6 +192,29 @@ func (e *Ensemble) predictCSRInner(
 
 		e.predictInnerAndTransform(fvals, nEstimators, predictions, i*e.NOutputGroups())
 		e.resetFVals(fvals)
+	}
+}
+
+func (e *Ensemble) predictCSRInnerSparse(
+	indptr []int,
+	cols []int,
+	vals []float64,
+	startIndex int,
+	endIndex int,
+	predictions []float64,
+	nEstimators int,
+) {
+	for i := startIndex; i < endIndex; i++ {
+		fmap := make(map[int]float64)
+		start := indptr[i]
+		end := indptr[i+1]
+		for j := start; j < end; j++ {
+			if cols[j] < e.NFeatures() {
+				fmap[cols[j]] = vals[j]
+			}
+		}
+
+		e.predictInnerAndTransformSparse(fmap, nEstimators, predictions, i*e.NOutputGroups())
 	}
 }
 
