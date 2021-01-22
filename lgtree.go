@@ -3,7 +3,7 @@ package leaves
 import (
 	"math"
 
-	"github.com/dmitryikh/leaves/util"
+	"github.com/ucfunnel/leaves/util"
 )
 
 const (
